@@ -43,14 +43,30 @@ class TenantAccessMiddleware(MiddlewareMixin):
             return None  # view will 404; not our job to decide here.
 
         if tenant.is_public:
-            return None
+            # Public tenant: still require admin access for CRM section
+            user = getattr(request, "user", None)
+            if user is not None and user.is_authenticated and (user.is_staff or user.is_superuser):
+                return None  # admin access granted
+            if user is not None and user.is_authenticated:
+                from django.http import HttpResponseForbidden
+                return HttpResponseForbidden("Admin access required.")
+            target = f"{login_path}?instance={tenant.slug}"
+            if request.headers.get("HX-Request") == "true":
+                response = HttpResponse("")
+                response["HX-Redirect"] = target
+                return response
+            return HttpResponseRedirect(target)
 
-        # Private tenant: require an authenticated member.
+        # Private tenant: require an authenticated admin/staff user.
         user = getattr(request, "user", None)
-        if user is not None and user.is_authenticated:
-            return None  # resolve_tenant already validated membership
+        if user is not None and user.is_authenticated and (user.is_staff or user.is_superuser):
+            return None  # admin access granted
 
-        # Not authenticated -> send to login.
+        # Not authenticated or not admin -> send to login (or 403 for auth'd non-admin).
+        if user is not None and user.is_authenticated:
+            from django.http import HttpResponseForbidden
+            return HttpResponseForbidden("Admin access required.")
+        
         target = f"{login_path}?instance={tenant.slug}"
         if request.headers.get("HX-Request") == "true":
             response = HttpResponse("")
